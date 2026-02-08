@@ -1,0 +1,9 @@
+{
+  "rules": {
+    "downloads": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.isNumber()"
+    }
+  }
+}

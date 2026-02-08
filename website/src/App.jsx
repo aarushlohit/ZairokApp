@@ -1,5 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getDatabase, ref, onValue, runTransaction, set } from 'firebase/database';
 import './styles.css';
+
+// Firebase singleton instance
+let firebaseApp = null;
+let firebaseDb = null;
+
+const getFirebaseApp = () => {
+  if (!firebaseApp) {
+    const firebaseConfig = {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    };
+    firebaseApp = initializeApp(firebaseConfig);
+    firebaseDb = getDatabase(firebaseApp);
+  }
+  return { app: firebaseApp, db: firebaseDb };
+};
 
 const features = [
   {
@@ -44,22 +67,66 @@ const developerBio = {
 
 export default function App() {
   const [theme, setTheme] = useState('light');
-  const [downloads, setDownloads] = useState(1); // Initial base count set to 1
+  const [downloads, setDownloads] = useState(0);
+  const [isConnected, setIsConnected] = useState(false);
+  const dbInitialized = useRef(false);
 
   useEffect(() => {
-    const savedDownloads = localStorage.getItem('zairok_downloads');
-    if (!savedDownloads || savedDownloads !== '1') {
+    if (dbInitialized.current) return;
+    dbInitialized.current = true;
+
+    try {
+      const { db } = getFirebaseApp();
+      const downloadsRef = ref(db, 'downloads');
+
+      // Subscribe to live updates
+      const unsubscribe = onValue(
+        downloadsRef,
+        (snapshot) => {
+          const value = snapshot.val();
+          console.log('Downloads updated:', value);
+          setDownloads(typeof value === 'number' ? value : 50);
+          setIsConnected(true);
+        },
+        (error) => {
+          console.error('Firebase read error:', error);
+          // If database doesn't exist yet, use fallback
+          setDownloads(50);
+          setIsConnected(false);
+        }
+      );
+
+      return () => unsubscribe();
+    } catch (err) {
+      console.error('Firebase init error:', err);
       setDownloads(50);
-      localStorage.setItem('zairok_downloads', '1');
-    } else {
-      setDownloads(50);
+      setIsConnected(false);
     }
   }, []);
 
   const handleDownload = () => {
-    const newCount = downloads + 1;
-    setDownloads(newCount);
-    localStorage.setItem('zairok_downloads', newCount.toString());
+    try {
+      const { db } = getFirebaseApp();
+      const downloadsRef = ref(db, 'downloads');
+
+      // Atomic increment
+      runTransaction(downloadsRef, (current) => {
+        const newVal = (current || 0) + 1;
+        console.log('Incrementing downloads to:', newVal);
+        return newVal;
+      })
+        .then(() => {
+          console.log('Successfully incremented');
+        })
+        .catch((err) => {
+          console.error('Error incrementing downloads:', err);
+          // Optimistic fallback: increment locally
+          setDownloads((prev) => prev + 1);
+        });
+    } catch (err) {
+      console.error('handleDownload error:', err);
+      setDownloads((prev) => prev + 1);
+    }
   };
 
   const toggleTheme = () => {
